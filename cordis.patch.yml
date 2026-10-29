@@ -1,0 +1,7 @@
+# 插件管理器自身的装载行。
+#
+# 这里用**包名**（而不是相对路径）：包会被 install.mjs 复制进 profile 的
+# node_modules/dsh-plugin-manager/，裸说明符从那里解析最稳。
+- insert:
+    - id: dsh-plugin-manager
+      name: 'dsh-plugin-manager'

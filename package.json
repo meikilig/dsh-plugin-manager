@@ -1,0 +1,30 @@
+{
+  "name": "dsh-plugin-manager",
+  "version": "1.0.0",
+  "description": "DSH 插件管理器：列出 profile 里的全部插件，带开关（改配置、需手动重启；核心插件不可关）",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "ui.html",
+    "cordis.patch.yml",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "setup": "node scripts/install.mjs"
+  },
+  "keywords": ["dsh", "dsh-plugin", "plugin-manager"],
+  "engines": { "node": ">=22.13.0" },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

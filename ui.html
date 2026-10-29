@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>插件管理器 · DSH</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#262b36; --txt:#e6e9ef; --dim:#8b93a3;
+    --accent:#4b6fff; --ok:#3fbf7f; --warn:#f0a441; --danger:#e5534b;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f5f6f8; --panel:#fff; --line:#e3e6ec; --txt:#1c2128; --dim:#667085; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:20px;margin:0 0 6px}
+  .sub{color:var(--dim);margin:0 0 24px;font-size:13px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .row{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border-top:1px solid var(--line)}
+  .row:first-child{border-top:0}
+  .meta{flex:1;min-width:0}
+  .name{font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .ver{color:var(--dim);font-weight:400;font-size:12px}
+  .desc{color:var(--dim);font-size:12.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .badge.lock{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+  .badge.core{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+  .sw{position:relative;width:44px;height:24px;flex:none;margin-top:2px}
+  .sw input{opacity:0;width:0;height:0}
+  .sw span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:.18s;cursor:pointer}
+  .sw span::after{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:#fff;transition:.18s}
+  .sw input:checked + span{background:var(--ok)}
+  .sw input:checked + span::after{transform:translateX(20px)}
+  .sw input:disabled + span{opacity:.45;cursor:not-allowed}
+  .tip{margin-top:18px;padding:12px 14px;border-radius:10px;background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);color:var(--warn);font-size:13px;display:none}
+  .tip.show{display:block}
+  .err{margin-top:14px;color:var(--danger);font-size:13px;display:none}
+  .err.show{display:block}
+  .foot{margin-top:20px;color:var(--dim);font-size:12px}
+  .empty{padding:24px 16px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>插件管理器</h1>
+  <p class="sub">列出当前 profile 里装的全部插件。<strong>开关只改配置，需要重启 DSH 才生效</strong>（不会自动重启，避免打断正在跑的会话）。</p>
+
+  <div class="card" id="list"><div class="empty">正在读取…</div></div>
+  <div class="tip" id="tip">已保存。请手动重启 DSH 让改动生效。</div>
+  <div class="err" id="err"></div>
+  <p class="foot">受保护的插件（surfcore 等）不允许关闭 —— 关掉会让 QQ 桥接或 DSH 本身体停摆。</p>
+</div>
+
+<script>
+const PROTECTED_HINTS = {
+  'surfcore': 'QQ 桥接本体，关掉她就不回话了',
+  'dsh-plugin-manager': '就是本页面',
+  '@deepseek-ai/dsh-base': 'DSH 基础层',
+  '@deepseek-ai/dsh-web-app': 'DSH 网页端'
+};
+
+const $list = document.getElementById('list');
+const $tip = document.getElementById('tip');
+const $err = document.getElementById('err');
+
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function rowHtml(it){
+  const locked = it.protected === true;
+  const hint = PROTECTED_HINTS[it.id];
+  const badges = [
+    locked ? `<span class="badge lock">受保护</span>` : '',
+    it.isDshPlugin ? '' : `<span class="badge">非 bundle</span>`,
+    hint ? `<span class="badge core">${esc(hint)}</span>` : ''
+  ].join('');
+  return `
+  <div class="row">
+    <div class="meta">
+      <div class="name">${esc(it.name)} <span class="ver">${esc(it.version || '')}</span> ${badges}</div>
+      <div class="desc">${esc(it.description || '（没有描述）')}</div>
+    </div>
+    <label class="sw">
+      <input type="checkbox" ${it.enabled ? 'checked' : ''} ${locked ? 'disabled' : ''} data-bundle="${esc(it.id)}">
+      <span></span>
+    </label>
+  </div>`;
+}
+
+async function load(){
+  try{
+    const r = await fetch('/plugin-manager/api/list', { credentials: 'same-origin' });
+    const j = await r.json();
+    if(!j.ok){ throw new Error(j.error || '读取失败'); }
+    if(!j.items.length){ $list.innerHTML = '<div class="empty">这个 profile 还没有装任何插件。</div>'; return; }
+    $list.innerHTML = j.items.map(rowHtml).join('');
+    $list.querySelectorAll('input[type=checkbox]').forEach(el => {
+      el.addEventListener('change', () => toggle(el));
+    });
+  }catch(e){
+    $err.textContent = '读取失败：' + e.message;
+    $err.classList.add('show');
+  }
+}
+
+async function toggle(el){
+  const bundle = el.dataset.bundle;
+  const enabled = el.checked;
+  el.disabled = true;
+  try{
+    const r = await fetch('/plugin-manager/api/toggle', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bundle, enabled })
+    });
+    const j = await r.json();
+    if(!j.ok){
+      throw new Error(j.error || '保存失败');
+    }
+    $tip.classList.add('show');
+    $err.classList.remove('show');
+  }catch(e){
+    el.checked = !enabled;   // 回滚
+    $err.textContent = '保存失败：' + e.message;
+    $err.classList.add('show');
+  }finally{
+    el.disabled = false;
+  }
+}
+
+load();
+</script>
+</body>
+</html>
