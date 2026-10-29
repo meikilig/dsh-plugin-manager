@@ -17,7 +17,6 @@ const UI_FILE = path.join(HERE, 'ui.html');
 
 export const name = 'dsh-plugin-manager';
 export { findProfileDir, listPlugins, setEnabled };
-export const inject = ['webServer'];
 
 /** 这些 bundle 不给关：关掉会让 DSH 或 QQ 桥接直接瘫痪。 */
 const PROTECTED = new Set(['surfcore', '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-plugin-manager']);
@@ -183,7 +182,33 @@ function readBody(req, limit = 64 * 1024) {
   });
 }
 
-export function apply(ctx) {
+// 桌面端（Electron）注入行：DSH 桌面壳的 index.html 直接从安装包读取，
+// tapIndex 过不去，唯一通道是 `webserver/index-inject` 推的结构化行。
+// 用内联 script（不是 script-src）：页面侧对 script-src 加载失败会 reject 整个 boot，
+// 内联行由我们自己建 <script> 并吞掉 onerror，宿主永远不会因为我们起不来。
+const DESKTOP_ROW = '(function(){try{var d=document.body||document.documentElement;if(!d)return;'
+  + 'if(window.__DSH_PLUGIN_MANAGER__)return;window.__DSH_PLUGIN_MANAGER__=1;'
+  + 'var s=document.createElement("script");s.src="/plugin-manager/ui.js";s.onerror=function(){};d.appendChild(s)}catch(e){}})()';
+
+export function apply(root) {
+  const rowDisposers = [];
+  try { root.effect(() => () => { for (const d of rowDisposers) { try { d(); } catch { } } }); } catch { }
+  // ① 桌面端：结构化注入行（必须在 apply 一开始就注册，宿主的注入表是启动时一次性收集的）
+  try {
+    rowDisposers.push(root.on('webserver/index-inject', (table) => {
+      if (!Array.isArray(table)) return;
+      for (const row of table) {
+        if (row && row.kind === 'script' && typeof row.text === 'string' && row.text.includes('/plugin-manager/ui.js')) return;
+        if (row && row.kind === 'script-src' && row.src === '/plugin-manager/ui.js') return;
+      }
+      table.push({ kind: 'script', placement: 'body', text: DESKTOP_ROW });
+    }));
+  } catch (error) {
+    log('注册桌面注入行失败：' + (error?.message ?? error));
+  }
+
+  // ② 其余逻辑：等 webServer 就绪后再注册路由（局部 inject，不挡住 ①）
+  root.inject(['webServer'], (ctx) => {
   const disposers = [];
 
   function guard(req, res) {
@@ -206,6 +231,21 @@ export function apply(ctx) {
     return true;
   }
 
+  disposers.push(ctx.webServer.register({
+    kind: 'exact',
+    path: '/plugin-manager/ui.js',
+    handler: async (req, res) => {
+      // 悬浮入口脚本：不校验 Cookie（只是静态 JS，内容和权限无关；真正的写操作在 /api/toggle 里校验）
+      try {
+        const js = fs.readFileSync(path.join(HERE, 'ui.js'), 'utf8');
+        res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(js);
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('ui.js 读不到：' + (error?.message ?? error));
+      }
+    }
+  }));
   disposers.push(ctx.webServer.register({
     kind: 'exact',
     path: '/plugin-manager',
@@ -253,4 +293,25 @@ export function apply(ctx) {
 
   log('已注册 /plugin-manager');
   return () => { for (const d of disposers) { try { d?.(); } catch { } } };
+    // 网页端（浏览器打开 DSH）：tapIndex 直接把脚本标签塞进 index.html
+    try {
+      if (typeof ctx.webServer.tapIndex === 'function') {
+        disposers.push(ctx.webServer.tapIndex((html) => {
+          if (typeof html !== 'string' || html.includes('/plugin-manager/ui.js')) return html;
+          const tag = '<script defer src="/plugin-manager/ui.js"></script>';
+          return html.includes('</body>') ? html.replace('</body>', tag + '</body>') : html + tag;
+        }));
+      }
+    } catch (error) {
+      log('tapIndex 注册失败：' + (error?.message ?? error));
+    }
+
+    log('已注册 /plugin-manager（页面 + 悬浮入口）');
+    return () => { for (const d of disposers) { try { d?.(); } catch { } } };
+  });
 }
+
+export default {
+  name,
+  apply
+};

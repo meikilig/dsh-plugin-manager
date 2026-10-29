@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PKG_DIR = path.resolve(HERE, '..');
 const PKG_NAME = 'dsh-plugin-manager';
-const COPY_FILES = ['package.json', 'index.js', 'ui.html', 'cordis.patch.yml'];
+const COPY_FILES = ['package.json', 'index.js', 'ui.html', 'ui.js', 'cordis.patch.yml'];
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
