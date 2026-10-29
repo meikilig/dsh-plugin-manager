@@ -49,22 +49,76 @@ function findProfileDir() {
   return null;
 }
 
-/** 读某个已装包的元信息（版本、描述、是不是真有 dsh.bundle）。 */
+/**
+ * 从 README 里抓一句摘要。
+ *
+ * 为什么需要：不少插件（包括 DSH 自己的）package.json 里 description 很空，
+ * 真正的说明在 README 第一段。这里做最小清洗：去掉徽章/图片/HTML/链接语法，
+ * 取第一段像人话的文字（长度 >= 12），截到 160 字。
+ */
+function readReadmeSummary(pkgDir) {
+  for (const name of ['README.md', 'readme.md', 'README.MD']) {
+    const p = path.join(pkgDir, name);
+    if (!fs.existsSync(p)) continue;
+    try {
+      const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
+      for (let raw of lines) {
+        let line = String(raw).trim();
+        if (!line) continue;
+        if (line.startsWith('#')) continue;                 // 标题
+        if (line.startsWith('```') || line.startsWith('---')) continue;
+        if (line.startsWith('>')) line = line.replace(/^>\s*/, ''); // 引用里的介绍也算
+        if (/^<|^!\[|^\[!\[/.test(line)) continue;          // 徽章、图片、HTML
+        line = line
+          .replace(/!\[[^\]]*\]\([^)]*\)/g, '')             // 图片
+          .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')          // 链接 → 文字
+          .replace(/<[^>]+>/g, '')                          // HTML 标签
+          .replace(/[`*_~]/g, '')                           // 行内标记
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (line.replace(/[^\u4e00-\u9fffA-Za-z0-9]/g, '').length < 12) continue;
+        return line.slice(0, 160);
+      }
+    } catch { }
+  }
+  return '';
+}
+
+/** 读某个已装包的元信息（版本、描述、是不是真有 dsh.bundle、README 摘要）。 */
 function readPluginMeta(profileDir, bundleName) {
   const base = path.join(profileDir, 'node_modules', ...bundleName.split('/'));
   const pkgPath = path.join(base, 'package.json');
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const description = String(pkg.description || '').split('\n')[0].trim().slice(0, 160);
+    const summary = description || readReadmeSummary(base);
     return {
       id: bundleName,
       name: pkg.name || bundleName,
       version: pkg.version || '',
-      description: String(pkg.description || '').split('\n')[0].slice(0, 160),
+      description,
+      summary,
+      summarySource: description ? 'package.json' : (summary ? 'README' : 'none'),
       isDshPlugin: Boolean(pkg.dsh?.bundle?.patch),
       installed: true
     };
   } catch {
-    return { id: bundleName, name: bundleName, version: '', description: '（找不到 package.json）', isDshPlugin: false, installed: false };
+    // 内置 bundle 不在 node_modules 里（比如 @deepseek-ai/dsh-base 由安装包自带），
+    // 这不是错误，给一句人能看懂的话，别让用户以为插件坏了。
+    const builtinHint = {
+      '@deepseek-ai/dsh-base': 'DSH 基础层（随安装包内置，不在 node_modules 里）',
+      '@deepseek-ai/dsh-web-app': 'DSH 网页端（随安装包内置，不在 node_modules 里）'
+    }[bundleName];
+    return {
+      id: bundleName,
+      name: bundleName,
+      version: '',
+      description: '',
+      summary: builtinHint || '（这个 bundle 在 node_modules 里没有对应目录，可能是内置或已卸载）',
+      summarySource: builtinHint ? 'builtin' : 'none',
+      isDshPlugin: true,
+      installed: false
+    };
   }
 }
 
